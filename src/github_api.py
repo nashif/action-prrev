@@ -109,6 +109,51 @@ class GitHubClient:
     def list_files(self, number: int) -> list[dict[str, Any]]:
         return self._paginate(f"/repos/{self.repo}/pulls/{number}/files")
 
+    # -- repository contents ----------------------------------------------
+
+    def get_repo_info(self) -> dict[str, Any]:
+        try:
+            return self._request("GET", f"/repos/{self.repo}").json()
+        except HttpError as exc:
+            log.warning("Could not read repository metadata: %s", exc)
+            return {}
+
+    def get_file(self, path: str, ref: str, max_bytes: int = 400_000) -> str | None:
+        """Fetch a file's contents at `ref`. Returns None when absent, binary, or oversized."""
+        quoted = quote(path)
+        try:
+            resp = self._request(
+                "GET",
+                f"/repos/{self.repo}/contents/{quoted}?ref={quote(ref, safe='')}",
+                accept="application/vnd.github.raw",
+            )
+        except HttpError as exc:
+            if exc.status in (403, 404, 422):  # missing, submodule, or too large for the raw endpoint
+                log.debug("No contents for %s at %s (HTTP %s)", path, ref[:7], exc.status)
+                return None
+            raise
+
+        if len(resp.body) > max_bytes or b"\0" in resp.body[:8000]:
+            return None
+        return resp.text
+
+    def get_tree(self, ref: str, max_entries: int = 4000) -> list[str]:
+        """Return repository file paths at `ref`, empty when the tree cannot be read."""
+        try:
+            data = self._request("GET", f"/repos/{self.repo}/git/trees/{quote(ref, safe='')}?recursive=1").json()
+        except HttpError as exc:
+            log.warning("Could not read repository tree: %s", exc)
+            return []
+        if data.get("truncated"):
+            log.info("Repository tree was truncated by the API; the overview will be partial")
+        return [node["path"] for node in data.get("tree", [])[:max_entries] if node.get("type") == "blob"]
+
+    def get_readme(self) -> str | None:
+        try:
+            return self._request("GET", f"/repos/{self.repo}/readme", accept="application/vnd.github.raw").text
+        except HttpError:
+            return None
+
     def _paginate(self, path: str, per_page: int = 100, max_pages: int = 30) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for page in range(1, max_pages + 1):

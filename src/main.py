@@ -10,6 +10,7 @@ import os
 import sys
 
 import config
+import context
 import diffparse
 import github_api
 import render
@@ -116,7 +117,8 @@ def main() -> int:
 
     total = sum(f.size for f in files)
     if total <= cfg.max_diff_chars and total <= cfg.chunk_chars:
-        chunks, dropped = ["".join(f.patch for f in files)], False
+        one = diffparse.Chunk(diff="".join(f.patch for f in files), paths=[f.path for f in files])
+        chunks, dropped = [one], False
     else:
         log.info("Diff is %d chars; splitting into slices of ~%d", total, cfg.chunk_chars)
         chunks, dropped = diffparse.chunk(files, cfg.chunk_chars, cfg.max_chunks)
@@ -128,16 +130,37 @@ def main() -> int:
         title=f"AI PR Review ({repo})",
     )
 
-    result = review_mod.run(client, cfg, pr, chunks, files_summary(files))
+    builder = context.ContextBuilder(gh, repo, pr.head_sha, source=cfg.context_source)
+    overview = builder.repo_overview() if cfg.include_repo_overview else ""
+
+    by_path = {f.path: f for f in files}
+
+    def context_for(paths: list[str]) -> str:
+        if not cfg.include_file_context:
+            return ""
+        wanted = [by_path[path] for path in paths if path in by_path]
+        return builder.file_context(wanted, cfg.context_lines, cfg.max_context_chars)
+
+    result = review_mod.run(
+        client,
+        cfg,
+        pr,
+        chunks,
+        files_summary(files),
+        repo=repo,
+        repo_overview=overview,
+        context_for=context_for,
+    )
     result.truncated = dropped
     result.excluded_files = excluded
 
     log.info(
-        "Review complete: score=%d verdict=%s findings=%d tokens=%d",
+        "Review complete: score=%d verdict=%s findings=%d tokens=%d context=%d chars",
         result.score,
         result.verdict,
         len(result.findings),
         result.prompt_tokens + result.completion_tokens,
+        result.context_chars,
     )
 
     comment_url = ""

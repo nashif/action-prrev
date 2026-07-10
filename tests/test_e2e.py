@@ -28,6 +28,38 @@ DIFF = """diff --git a/app/auth.py b/app/auth.py
 +    return user
 """
 
+AUTH_SOURCE = """import db
+
+
+def lookup(email):
+    return db.users.get(email)
+
+
+def login(request):
+    token = request.headers["X-Token"]
+    user = lookup(request.form["email"])
+    if not user:
+        return None
+    query = "SELECT * FROM sessions WHERE token = '" + token + "'"
+    db.execute(query)
+    return user
+
+
+def logout():
+    pass
+"""
+
+REPO_JSON = {"description": "A payments service.", "language": "Python", "topics": ["fintech"]}
+
+TREE_JSON = {
+    "tree": [
+        {"path": "README.md", "type": "blob"},
+        {"path": "pyproject.toml", "type": "blob"},
+        {"path": "app/auth.py", "type": "blob"},
+        {"path": "app/routes.py", "type": "blob"},
+    ]
+}
+
 PR_JSON = {
     "number": 1,
     "title": "Add session lookup",
@@ -64,6 +96,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, PR_JSON)
         if self.path.startswith("/repos/acme/app/issues/1/comments"):
             return self._send(200, [])  # no previous comment to update
+        if self.path.startswith("/repos/acme/app/contents/app/auth.py"):
+            return self._send(200, AUTH_SOURCE, "text/plain")
+        if self.path.startswith("/repos/acme/app/git/trees/"):
+            return self._send(200, TREE_JSON)
+        if self.path == "/repos/acme/app/readme":
+            return self._send(200, "# Payments\n\nHandles money.", "text/plain")
+        if self.path == "/repos/acme/app":
+            return self._send(200, REPO_JSON)
         return self._send(404, {"message": "not found"})
 
     def do_POST(self):
@@ -230,3 +270,57 @@ def test_required_label_absent_skips(server, tmp_path):
     proc, outputs, _ = run_action(server, tmp_path, INPUT_REQUIRED_LABELS="ai-review")
     assert proc.returncode == 0
     assert outputs["skipped"] == "true"
+
+
+def _prompt(requests):
+    completion = next(body for _, path, body in requests if path.endswith("/chat/completions"))
+    return completion["messages"][1]["content"]
+
+
+def test_prompt_carries_the_surrounding_source_of_changed_files(server, tmp_path):
+    proc, _, _ = run_action(server, tmp_path, INPUT_CONTEXT_LINES="5")
+    assert proc.returncode == 0
+
+    prompt = _prompt(Handler.requests)
+    assert "### Surrounding code at the head commit" in prompt
+    assert "`app/auth.py` (19 lines)" in prompt
+    # The real file is shown with real line numbers, including code the diff never
+    # touched -- here, where `token` comes from, which the diff alone never reveals.
+    assert "    8| def login(request):" in prompt
+    assert '    9|     token = request.headers["X-Token"]' in prompt
+    # ...and the diff still follows.
+    assert "```diff" in prompt
+
+
+def test_prompt_carries_the_repository_overview(server, tmp_path):
+    proc, _, _ = run_action(server, tmp_path)
+    assert proc.returncode == 0
+
+    prompt = _prompt(Handler.requests)
+    assert "### About this repository" in prompt
+    assert "A payments service." in prompt
+    assert "Primary language: Python" in prompt
+    assert "`pyproject.toml`" in prompt
+    assert "Handles money." in prompt
+
+
+def test_context_can_be_disabled(server, tmp_path):
+    proc, _, _ = run_action(
+        server, tmp_path, INPUT_INCLUDE_FILE_CONTEXT="false", INPUT_INCLUDE_REPO_OVERVIEW="false"
+    )
+    assert proc.returncode == 0
+
+    prompt = _prompt(Handler.requests)
+    assert "Surrounding code" not in prompt
+    assert "About this repository" not in prompt
+    assert "```diff" in prompt
+    # No context means no reason to touch the contents endpoint.
+    assert not any("/contents/" in path for _, path, _ in Handler.requests)
+
+
+def test_maintainer_guidance_reaches_the_prompt(server, tmp_path):
+    proc, _, _ = run_action(server, tmp_path, INPUT_PROJECT_CONTEXT="Do not flag missing type hints.")
+    assert proc.returncode == 0
+    prompt = _prompt(Handler.requests)
+    assert "### Maintainer's review guidance" in prompt
+    assert "Do not flag missing type hints." in prompt

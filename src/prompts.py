@@ -89,9 +89,12 @@ You are a meticulous senior software engineer reviewing a GitHub pull request. \
 You are also a security reviewer: treat every changed line as untrusted until you have reasoned about how it could be abused.
 
 Rules you must follow:
-1. Review only the lines present in the diff. Do not comment on code you cannot see, and do not ask to see more files.
+1. Report findings only against lines the diff changes. You are given the surrounding source of each changed file and a map \
+of the repository: use them to understand what the changed code does, what its callers assume, and what already exists — \
+but a pre-existing defect on an unchanged line is not this pull request's problem. Do not ask to see more files.
 2. Every finding must be actionable and specific. Name the input, state, or sequence of calls that triggers the problem. \
-If you cannot describe how it fails, it is not a finding.
+If you cannot describe how it fails, it is not a finding. Use the surrounding code to check your reasoning before you report: \
+if a guard, a validation, or an early return upstream already makes the failure impossible, say nothing.
 3. Never report style preferences, formatting, or missing comments as bugs. A linter already does that.
 4. `file` must match a path in the diff exactly. `line` must be a line number on the new side of the diff \
 (the numbering established by the @@ hunk headers), or 0 when the finding is not tied to one line.
@@ -108,32 +111,60 @@ Return only the JSON object described by the schema. No prose outside it.\
 """
 
 
-def _pr_header(pr, files_summary: str, project_context: str) -> str:
+def _pr_header(pr, files_summary: str, project_context: str, repo_overview: str, repo: str) -> str:
     parts = [
         f"## Pull request #{pr.number}: {pr.title}",
+        f"Repository: `{repo}`",
         f"Base branch: `{pr.base_ref}` <- head: `{pr.head_ref}`",
         f"Changed files: {pr.changed_files} (+{pr.additions} / -{pr.deletions})",
     ]
     if pr.body.strip():
         parts.append(f"\n### Author's description\n{pr.body.strip()[:4000]}")
+    if repo_overview:
+        parts.append(f"\n### About this repository\n{repo_overview}")
     if project_context:
-        parts.append(f"\n### Repository context\n{project_context[:6000]}")
+        parts.append(f"\n### Maintainer's review guidance\n{project_context[:6000]}")
     if files_summary:
         parts.append(f"\n### Files under review\n{files_summary}")
     return "\n".join(parts)
 
 
-def review_prompt(pr, diff: str, files_summary: str, project_context: str, chunk_info: str = "") -> str:
-    header = _pr_header(pr, files_summary, project_context)
+def review_prompt(
+    pr,
+    diff: str,
+    files_summary: str,
+    project_context: str,
+    *,
+    repo: str = "",
+    repo_overview: str = "",
+    file_context: str = "",
+    chunk_info: str = "",
+) -> str:
+    header = _pr_header(pr, files_summary, project_context, repo_overview, repo)
     scope = f"\n\n> {chunk_info}" if chunk_info else ""
-    return (
-        f"{header}{scope}\n\n"
-        "### Diff\n"
-        "```diff\n"
-        f"{diff}\n"
-        "```\n\n"
-        "Review this diff and return the JSON object."
-    )
+
+    body = [f"{header}{scope}", ""]
+    if file_context:
+        body += [
+            "### Surrounding code at the head commit",
+            "",
+            "These are the current contents of each changed file around the lines the diff touches, "
+            "with real line numbers. The diff below is already applied to them. Read these before judging "
+            "whether a change is correct — they show the callers, guards, and helpers the diff cannot.",
+            "",
+            file_context,
+            "",
+        ]
+    body += [
+        "### Diff",
+        "",
+        "```diff",
+        diff,
+        "```",
+        "",
+        "Review the changed lines and return the JSON object.",
+    ]
+    return "\n".join(body)
 
 
 def synthesis_prompt(pr, findings_digest: str, chunk_count: int, language: str) -> str:

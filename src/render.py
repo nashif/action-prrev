@@ -146,6 +146,8 @@ def _footer(review: Review, pr) -> str:
         bits.append("⚠️ diff truncated — some files were not reviewed")
     if review.excluded_files:
         bits.append(f"{len(review.excluded_files)} file(s) excluded")
+    if review.context_chars:
+        bits.append(f"{review.context_chars:,} chars of surrounding code")
     tokens = review.prompt_tokens + review.completion_tokens
     if tokens:
         cost = f", ${review.cost:.4f}" if review.cost else ""

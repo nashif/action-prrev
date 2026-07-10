@@ -81,6 +81,7 @@ def test_chunking_keeps_whole_files_together():
     chunks, truncated = diffparse.chunk(files, chunk_chars=10_000, max_chunks=8)
     assert len(chunks) == 1
     assert truncated is False
+    assert chunks[0].paths == ["app/auth.py", "package-lock.json"]
 
 
 def test_chunking_splits_when_over_budget():
@@ -90,7 +91,7 @@ def test_chunking_splits_when_over_budget():
     assert truncated is False
     # Every reviewable patch survives somewhere in the output. The binary file
     # is absent because filter_files drops it before chunking.
-    joined = "".join(chunks)
+    joined = "".join(c.diff for c in chunks)
     assert "app/auth.py" in joined and "package-lock.json" in joined
     assert "assets/logo.png" not in joined
 
@@ -109,4 +110,23 @@ def test_oversized_single_file_splits_on_hunk_boundaries():
     chunks, _ = diffparse.chunk(files, chunk_chars=300, max_chunks=20)
     assert len(chunks) > 1
     # Each slice repeats the file header so the model always knows the path.
-    assert all(chunk.startswith("diff --git a/big.py b/big.py") for chunk in chunks)
+    assert all(c.diff.startswith("diff --git a/big.py b/big.py") for c in chunks)
+    # ...and every slice knows which file it covers, so context can be scoped.
+    assert all(c.paths == ["big.py"] for c in chunks)
+
+
+def test_hunk_ranges_track_the_new_side():
+    auth = diffparse.parse(SAMPLE)[0]
+    # One hunk starting at new line 10, six lines of context+additions.
+    assert auth.hunk_ranges == [(10, 18)]
+
+
+def test_multiple_hunks_produce_separate_ranges():
+    diff = (
+        "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+added\n ctx\n"
+        "@@ -50,2 +51,3 @@\n ctx\n+added\n ctx\n"
+    )
+    (file,) = diffparse.parse(diff)
+    assert file.hunk_ranges == [(1, 3), (51, 53)]
+    assert file.commentable_lines == {2, 52}
