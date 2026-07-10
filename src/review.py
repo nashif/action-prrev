@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 import prompts
 from config import SEVERITY_ORDER, Config
+from diffparse import Chunk
 from openrouter import OpenRouterClient, parse_json
 
 log = logging.getLogger(__name__)
@@ -54,6 +56,7 @@ class Review:
     chunks: int = 1
     truncated: bool = False
     excluded_files: list[str] = field(default_factory=list)
+    context_chars: int = 0
 
     def by_category(self, category: str) -> list[Finding]:
         return [f for f in self.findings if f.category == category]
@@ -140,22 +143,54 @@ def _digest(findings: list[Finding], limit: int = 60) -> str:
     return "\n".join(lines)
 
 
-def run(client: OpenRouterClient, cfg: Config, pr, chunks: list[str], files_summary: str) -> Review:
+def run(
+    client: OpenRouterClient,
+    cfg: Config,
+    pr,
+    chunks: list[Chunk],
+    files_summary: str,
+    *,
+    repo: str = "",
+    repo_overview: str = "",
+    context_for: Callable[[list[str]], str] | None = None,
+) -> Review:
     """Review each diff chunk, then synthesize one verdict when there was more than one."""
     system = prompts.system_prompt(cfg.language)
     review = Review(chunks=len(chunks))
     partials: list[dict[str, Any]] = []
 
-    for index, diff in enumerate(chunks, start=1):
+    for index, slice_ in enumerate(chunks, start=1):
         chunk_info = (
             f"This is slice {index} of {len(chunks)} of a large pull request. "
             "Judge only what you can see here; another pass covers the rest."
             if len(chunks) > 1
             else ""
         )
-        user = prompts.review_prompt(pr, diff, files_summary, cfg.project_context, chunk_info)
+        # Context is scoped to the files in this slice, so a 12-file PR does not
+        # pay for 12 files of source on every one of its slices.
+        file_context = context_for(slice_.paths) if context_for else ""
+        if file_context:
+            review.context_chars += len(file_context)
 
-        log.info("Reviewing slice %d/%d (%d chars)", index, len(chunks), len(diff))
+        diff = slice_.diff
+        user = prompts.review_prompt(
+            pr,
+            diff,
+            files_summary,
+            cfg.project_context,
+            repo=repo,
+            repo_overview=repo_overview,
+            file_context=file_context,
+            chunk_info=chunk_info,
+        )
+
+        log.info(
+            "Reviewing slice %d/%d (%d diff chars, %d context chars)",
+            index,
+            len(chunks),
+            len(diff),
+            len(file_context),
+        )
         completion = client.complete(
             models=cfg.models,
             system=system,

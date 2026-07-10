@@ -22,13 +22,24 @@ class FileDiff:
     binary: bool = False
     additions: int = 0
     deletions: int = 0
-    # New-side line numbers that were added or kept in context; only these can
-    # legally carry an inline review comment.
+    # New-side line numbers that were added; only these can legally carry an
+    # inline review comment.
     commentable_lines: set[int] = field(default_factory=set)
+    # Inclusive (start, end) new-side line ranges covered by each hunk. Used to
+    # decide which slice of the real file to show the model as context.
+    hunk_ranges: list[tuple[int, int]] = field(default_factory=list)
 
     @property
     def size(self) -> int:
         return len(self.patch)
+
+
+@dataclass
+class Chunk:
+    """A slice of the diff, plus the paths it touches so context can be scoped to it."""
+
+    diff: str
+    paths: list[str]
 
 
 def parse(diff_text: str) -> list[FileDiff]:
@@ -68,6 +79,7 @@ def _parse_file_block(block: str) -> FileDiff | None:
     binary = any(any(line.startswith(m) for m in BINARY_MARKERS) for line in lines)
     additions = deletions = 0
     commentable: set[int] = set()
+    hunk_ranges: list[tuple[int, int]] = []
     new_line = 0
 
     for line in lines[1:]:
@@ -81,6 +93,12 @@ def _parse_file_block(block: str) -> FileDiff | None:
             hunk = HUNK_RE.match(line)
             if hunk:
                 new_line = int(hunk.group(3))
+                # Trust the header's line count rather than counting body lines:
+                # a context line for a blank source line is a bare space that is
+                # easily lost, and "\ No newline at end of file" is not a line at all.
+                count = int(hunk.group(4)) if hunk.group(4) is not None else 1
+                if count:
+                    hunk_ranges.append((new_line, new_line + count - 1))
         elif line.startswith("+++") or line.startswith("---"):
             continue
         elif line.startswith("+"):
@@ -89,7 +107,8 @@ def _parse_file_block(block: str) -> FileDiff | None:
             new_line += 1
         elif line.startswith("-"):
             deletions += 1
-        elif line.startswith(" "):
+        elif line.startswith(" ") or not line:
+            # An empty string here is a context line for a blank source line.
             new_line += 1
 
     path = new_path if status != "removed" else old_path
@@ -102,6 +121,7 @@ def _parse_file_block(block: str) -> FileDiff | None:
         additions=additions,
         deletions=deletions,
         commentable_lines=commentable,
+        hunk_ranges=hunk_ranges,
     )
 
 
@@ -133,7 +153,7 @@ def filter_files(files: list[FileDiff], exclude: list[str]) -> tuple[list[FileDi
     return kept, dropped
 
 
-def _split_oversized(file: FileDiff, limit: int) -> list[str]:
+def _split_oversized(file: FileDiff, limit: int) -> list[tuple[str, str]]:
     """Break one file's patch along hunk boundaries so no single piece exceeds `limit`."""
     lines = file.patch.splitlines(keepends=True)
     head: list[str] = []
@@ -147,49 +167,56 @@ def _split_oversized(file: FileDiff, limit: int) -> list[str]:
             head.append(line)
 
     if not hunks:
-        return [file.patch[:limit]]
+        return [(file.path, file.patch[:limit])]
 
     header = "".join(head)
-    pieces: list[str] = []
+    pieces: list[tuple[str, str]] = []
     current: list[str] = []
     current_size = len(header)
     for hunk in hunks:
         hunk_text = "".join(hunk)
         if current and current_size + len(hunk_text) > limit:
-            pieces.append(header + "".join(current))
+            pieces.append((file.path, header + "".join(current)))
             current, current_size = [], len(header)
         current.append(hunk_text)
         current_size += len(hunk_text)
     if current:
-        pieces.append(header + "".join(current))
+        pieces.append((file.path, header + "".join(current)))
     return pieces
 
 
-def chunk(files: list[FileDiff], chunk_chars: int, max_chunks: int) -> tuple[list[str], bool]:
+def chunk(files: list[FileDiff], chunk_chars: int, max_chunks: int) -> tuple[list[Chunk], bool]:
     """Pack file patches into diff chunks, each roughly `chunk_chars` long.
 
     Files stay whole unless a single file is larger than the budget, in which
-    case it is divided at hunk boundaries. The bool reports whether `max_chunks`
-    forced some of the diff to be dropped.
+    case it is divided at hunk boundaries. Each chunk records the paths it
+    covers so surrounding-code context can be scoped to just those files. The
+    bool reports whether `max_chunks` forced some of the diff to be dropped.
     """
-    pieces: list[str] = []
+    pieces: list[tuple[str, str]] = []
     for file in files:
         if file.size > chunk_chars:
             pieces.extend(_split_oversized(file, chunk_chars))
         else:
-            pieces.append(file.patch)
+            pieces.append((file.path, file.patch))
 
-    chunks: list[str] = []
+    chunks: list[Chunk] = []
     current: list[str] = []
+    current_paths: list[str] = []
     current_size = 0
-    for piece in pieces:
+
+    def flush() -> None:
+        if current:
+            chunks.append(Chunk(diff="".join(current), paths=list(dict.fromkeys(current_paths))))
+
+    for path, piece in pieces:
         if current and current_size + len(piece) > chunk_chars:
-            chunks.append("".join(current))
-            current, current_size = [], 0
+            flush()
+            current, current_paths, current_size = [], [], 0
         current.append(piece)
+        current_paths.append(path)
         current_size += len(piece)
-    if current:
-        chunks.append("".join(current))
+    flush()
 
     return chunks[:max_chunks], len(chunks) > max_chunks
 

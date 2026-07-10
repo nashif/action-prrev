@@ -79,6 +79,32 @@ inputs:
     required: false
     default: "8"
 
+  include_file_context:
+    description: >-
+      Show the model the real source surrounding each changed hunk, read from the
+      pull request's head commit. Turn this off to review the raw diff alone.
+    required: false
+    default: "true"
+  include_repo_overview:
+    description: "Prepend a short map of the repository: description, layout, manifests, README excerpt."
+    required: false
+    default: "true"
+  context_lines:
+    description: "Lines of real source shown above and below each changed hunk."
+    required: false
+    default: "30"
+  max_context_chars:
+    description: "Character budget for surrounding-code context per diff slice."
+    required: false
+    default: "60000"
+  context_source:
+    description: >-
+      Where to read surrounding code from. `api` fetches each file at the head commit
+      and is always correct. `workspace` reads the checked-out tree, which saves API
+      calls but is only safe when the workflow checked out the pull request's head.
+    required: false
+    default: "api"
+
   skip_labels:
     description: "Comma-separated labels that suppress the review when present on the PR."
     required: false
@@ -170,6 +196,11 @@ runs:
         INPUT_MAX_DIFF_CHARS: ${{ inputs.max_diff_chars }}
         INPUT_CHUNK_CHARS: ${{ inputs.chunk_chars }}
         INPUT_MAX_CHUNKS: ${{ inputs.max_chunks }}
+        INPUT_INCLUDE_FILE_CONTEXT: ${{ inputs.include_file_context }}
+        INPUT_INCLUDE_REPO_OVERVIEW: ${{ inputs.include_repo_overview }}
+        INPUT_CONTEXT_LINES: ${{ inputs.context_lines }}
+        INPUT_MAX_CONTEXT_CHARS: ${{ inputs.max_context_chars }}
+        INPUT_CONTEXT_SOURCE: ${{ inputs.context_source }}
         INPUT_SKIP_LABELS: ${{ inputs.skip_labels }}
         INPUT_REQUIRED_LABELS: ${{ inputs.required_labels }}
         INPUT_SKIP_DRAFT: ${{ inputs.skip_draft }}

@@ -68,6 +68,12 @@ class Config:
     chunk_chars: int = 60_000
     max_chunks: int = 8
 
+    include_repo_overview: bool = True
+    include_file_context: bool = True
+    context_lines: int = 30
+    max_context_chars: int = 60_000
+    context_source: str = "api"
+
     skip_labels: list[str] = field(default_factory=list)
     required_labels: list[str] = field(default_factory=list)
     skip_draft: bool = True
@@ -111,6 +117,10 @@ def load() -> Config:
         except ValueError as exc:
             raise SystemExit("min_score must be an integer between 0 and 100") from exc
 
+    context_source = _get("context_source", "api").lower() or "api"
+    if context_source not in ("api", "workspace"):
+        raise SystemExit("context_source must be 'api' or 'workspace'")
+
     return Config(
         api_key=api_key,
         github_token=github_token,
@@ -123,6 +133,11 @@ def load() -> Config:
         max_diff_chars=_int("max_diff_chars", 180_000),
         chunk_chars=_int("chunk_chars", 60_000),
         max_chunks=_int("max_chunks", 8),
+        include_repo_overview=_bool("include_repo_overview", True),
+        include_file_context=_bool("include_file_context", True),
+        context_lines=max(0, _int("context_lines", 30)),
+        max_context_chars=_int("max_context_chars", 60_000),
+        context_source=context_source,
         skip_labels=[label.lower() for label in _list("skip_labels", ["no-ai-review"])],
         required_labels=[label.lower() for label in _list("required_labels")],
         skip_draft=_bool("skip_draft", True),

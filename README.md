@@ -83,10 +83,61 @@ a review comment, using GitHub's ```` ```suggestion ```` blocks so the author ca
 fix from the web UI. Findings whose line does not appear on the new side of the diff are
 silently dropped rather than rejected wholesale by the API.
 
+### Codebase context
+
+A diff hides the things a reviewer needs. `token` is concatenated into a SQL string — but is
+`token` attacker-controlled, or a constant three lines above the hunk? The diff cannot say, so a
+diff-only reviewer either misses the vulnerability or invents one.
+
+By default this action fetches each changed file **at the pull request's head commit** and shows
+the model the real source around every hunk, with true line numbers:
+
+```
+#### `app/auth.py` (19 lines)
+# Other definitions in this file:
+    4| def lookup(email):
+#
+# ... 8 line(s) omitted ...
+    9|     token = request.headers["X-Token"]     <- the diff never showed this
+   10|     user = lookup(request.form["email"])
+   ...
+   13|     query = "SELECT * FROM sessions WHERE token = '" + token + "'"
+```
+
+It also prepends a short map of the repository — description, primary language, directory
+layout, build manifests, and a README excerpt — so the model knows what kind of codebase it is
+reading before it starts.
+
+The system prompt draws the line explicitly: use the surrounding code to *understand* and to
+*disprove* findings, but only report defects on lines the diff changes. A pre-existing bug on an
+unchanged line is not this pull request's problem.
+
+Tuning:
+
+```yaml
+with:
+  context_lines: "50"            # more source around each hunk (default 30)
+  max_context_chars: "80000"     # per-slice budget for that source (default 60000)
+  include_repo_overview: "false" # skip the repo map, keep the file context
+  include_file_context: "false"  # review the raw diff alone, as before
+```
+
+Context is scoped per diff slice, so a twelve-file pull request does not pay for twelve files of
+source on every slice. A file whose context will not fit the budget is dropped whole rather than
+truncated — half a function is worse than none, because it invites findings about code that is
+really there, just not shown. The comment footer reports how many characters of surrounding code
+were used.
+
+`context_source` controls where the source is read from. `api` (the default) fetches each file at
+the head SHA and is always correct. `workspace` reads the checked-out tree instead, saving one API
+call per file — **only safe when your workflow checked out the pull request's head commit.** Under
+`pull_request_target` the workspace holds the *base* branch, so `workspace` would show the model
+the old code with the new line numbers. Leave it on `api` unless you know otherwise.
+
 ### Steering the review
 
-`project_context` is prepended to the prompt. Use it to tell the model what you actually
-care about — it changes the output more than the model choice does:
+`project_context` is prepended to the prompt as maintainer guidance. Use it to tell the model what
+you actually care about — it changes the output more than the model choice does:
 
 ```yaml
 with:
@@ -111,6 +162,11 @@ with:
 | `max_diff_chars` | `180000` | Diff size above which chunking begins. |
 | `chunk_chars` | `60000` | Approximate size of each slice of a large diff. |
 | `max_chunks` | `8` | Cap on slices reviewed; excess is disclosed in the comment. |
+| `include_file_context` | `true` | Show the real source surrounding each changed hunk. |
+| `include_repo_overview` | `true` | Prepend a map of the repository. |
+| `context_lines` | `30` | Lines of source shown above and below each hunk. |
+| `max_context_chars` | `60000` | Per-slice budget for surrounding code. |
+| `context_source` | `api` | `api` (always correct) or `workspace` (needs a head checkout). |
 | `skip_labels` | `no-ai-review,skip-review` | Labels that suppress the review. |
 | `required_labels` | — | If set, review only runs when one of these is present. |
 | `skip_draft` | `true` | Skip while the PR is a draft. |
@@ -144,6 +200,10 @@ full coverage.
 
 **Binary and generated files** never reach the model. The comment footer reports how many were
 excluded.
+
+**Context costs tokens.** Surrounding code makes the prompt substantially larger — that is the
+point, and it is the main lever on cost. Lower `context_lines` or set `include_file_context: "false"`
+if the bill matters more than the depth of the review.
 
 **Structured output.** The action requests a strict JSON schema. Models that reject
 `response_format` fall back to an unconstrained request, and the response is then recovered from
@@ -209,6 +269,7 @@ files, and gating logic are all exercised without network access or an API key.
 | [src/openrouter.py](src/openrouter.py) | OpenRouter client and JSON recovery. |
 | [src/prompts.py](src/prompts.py) | System prompt and response schema. |
 | [src/review.py](src/review.py) | Model orchestration, normalization, merging. |
+| [src/context.py](src/context.py) | Surrounding-code and repository-overview context. |
 | [src/render.py](src/render.py) | Markdown comment and inline comment rendering. |
 | [src/httpclient.py](src/httpclient.py) | urllib wrapper with retries and backoff. |
 
