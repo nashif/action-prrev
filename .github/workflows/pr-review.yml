@@ -24,7 +24,7 @@ jobs:
         uses: ./ # replace with owner/action-prrev@v1 when consuming from another repo
         with:
           openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
-          model: anthropic/claude-sonnet-4.5
+          model: deepseek/deepseek-v4-flash
           fallback_models: openai/gpt-4.1,google/gemini-2.5-pro
           post_inline_comments: "true"
           skip_labels: no-ai-review,dependencies
