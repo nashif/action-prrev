@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Anas Nashif
+# SPDX-License-Identifier: Apache-2.0
+
 """System/user prompts and the JSON schema the model must fill in."""
 
 from __future__ import annotations

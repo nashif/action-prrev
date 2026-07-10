@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Anas Nashif
+# SPDX-License-Identifier: Apache-2.0
+
 """Entry point for the AI PR review action."""
 
 from __future__ import annotations

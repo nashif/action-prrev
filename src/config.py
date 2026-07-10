@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Anas Nashif
+# SPDX-License-Identifier: Apache-2.0
+
 """Action inputs, resolved from the INPUT_* environment variables set by action.yml."""
 
 from __future__ import annotations

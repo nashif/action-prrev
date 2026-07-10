@@ -214,4 +214,4 @@ files, and gating logic are all exercised without network access or an API key.
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE)
