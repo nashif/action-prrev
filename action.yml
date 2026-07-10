@@ -1,0 +1,182 @@
+name: "AI PR Review"
+description: "AI-powered pull request review, code suggestions, and vulnerability scanning via OpenRouter."
+author: "Anas Nashif"
+
+branding:
+  icon: "eye"
+  color: "purple"
+
+inputs:
+  openrouter_api_key:
+    description: "OpenRouter API key. Store it as a repository secret."
+    required: true
+  github_token:
+    description: "Token used to read the pull request diff and post comments."
+    required: false
+    default: ${{ github.token }}
+  model:
+    description: >-
+      OpenRouter model slug, e.g. anthropic/claude-sonnet-4.5,
+      openai/gpt-4.1, google/gemini-2.5-pro, deepseek/deepseek-chat.
+    required: false
+    default: "anthropic/claude-sonnet-4.5"
+  fallback_models:
+    description: "Comma-separated model slugs tried in order if the primary model fails."
+    required: false
+    default: ""
+  base_url:
+    description: "OpenRouter API base URL."
+    required: false
+    default: "https://openrouter.ai/api/v1"
+  temperature:
+    description: "Sampling temperature for the review model."
+    required: false
+    default: "0.1"
+  max_tokens:
+    description: "Maximum tokens in each model response."
+    required: false
+    default: "8000"
+
+  exclude:
+    description: >-
+      Newline- or comma-separated glob patterns for files to omit from the diff
+      sent to the model (lockfiles, vendored code, generated output).
+    required: false
+    default: |
+      **/*.lock
+      **/*.min.js
+      **/*.min.css
+      **/package-lock.json
+      **/yarn.lock
+      **/pnpm-lock.yaml
+      **/poetry.lock
+      **/Cargo.lock
+      **/go.sum
+      **/*.svg
+      **/*.png
+      **/*.jpg
+      **/*.jpeg
+      **/*.gif
+      **/*.pdf
+      **/*.ico
+      **/vendor/**
+      **/node_modules/**
+      **/dist/**
+      **/build/**
+      **/__snapshots__/**
+      **/*.generated.*
+      **/*_pb2.py
+  max_diff_chars:
+    description: "Total diff characters sent to the model before chunking kicks in."
+    required: false
+    default: "180000"
+  chunk_chars:
+    description: "Approximate size of each diff chunk when a PR is too large for one request."
+    required: false
+    default: "60000"
+  max_chunks:
+    description: "Cap on the number of chunks reviewed for very large PRs."
+    required: false
+    default: "8"
+
+  skip_labels:
+    description: "Comma-separated labels that suppress the review when present on the PR."
+    required: false
+    default: "no-ai-review,skip-review"
+  required_labels:
+    description: "If set, the review only runs when the PR carries one of these comma-separated labels."
+    required: false
+    default: ""
+  skip_draft:
+    description: "Skip review while the pull request is a draft."
+    required: false
+    default: "true"
+
+  post_comment:
+    description: "Post (and update in place) a summary comment on the pull request."
+    required: false
+    default: "true"
+  post_inline_comments:
+    description: "Also attach findings as inline review comments on the changed lines."
+    required: false
+    default: "false"
+  comment_tag:
+    description: "Hidden marker used to find and update this action's previous comment."
+    required: false
+    default: "ai-pr-review"
+
+  fail_on_severity:
+    description: >-
+      Fail the step when a finding at or above this severity survives review.
+      One of: none, low, medium, high, critical.
+    required: false
+    default: "none"
+  min_score:
+    description: "Fail the step when the overall score (0-100) falls below this value. Empty disables the check."
+    required: false
+    default: ""
+
+  project_context:
+    description: "Extra repository context handed to the model (conventions, architecture, review priorities)."
+    required: false
+    default: ""
+  language:
+    description: "Natural language for the review prose."
+    required: false
+    default: "English"
+
+outputs:
+  score:
+    description: "Overall score from 0 to 100."
+    value: ${{ steps.review.outputs.score }}
+  verdict:
+    description: "One of approve, comment, request_changes."
+    value: ${{ steps.review.outputs.verdict }}
+  findings_count:
+    description: "Total number of findings across all categories."
+    value: ${{ steps.review.outputs.findings_count }}
+  highest_severity:
+    description: "Highest severity observed, or none."
+    value: ${{ steps.review.outputs.highest_severity }}
+  comment_url:
+    description: "URL of the posted summary comment."
+    value: ${{ steps.review.outputs.comment_url }}
+  skipped:
+    description: "true when the review was skipped by label, draft, or empty-diff gating."
+    value: ${{ steps.review.outputs.skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Run AI review
+      id: review
+      shell: bash
+      run: python "${GITHUB_ACTION_PATH}/src/main.py"
+      env:
+        PYTHONPATH: ${{ github.action_path }}/src
+        INPUT_OPENROUTER_API_KEY: ${{ inputs.openrouter_api_key }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_FALLBACK_MODELS: ${{ inputs.fallback_models }}
+        INPUT_BASE_URL: ${{ inputs.base_url }}
+        INPUT_TEMPERATURE: ${{ inputs.temperature }}
+        INPUT_MAX_TOKENS: ${{ inputs.max_tokens }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_MAX_DIFF_CHARS: ${{ inputs.max_diff_chars }}
+        INPUT_CHUNK_CHARS: ${{ inputs.chunk_chars }}
+        INPUT_MAX_CHUNKS: ${{ inputs.max_chunks }}
+        INPUT_SKIP_LABELS: ${{ inputs.skip_labels }}
+        INPUT_REQUIRED_LABELS: ${{ inputs.required_labels }}
+        INPUT_SKIP_DRAFT: ${{ inputs.skip_draft }}
+        INPUT_POST_COMMENT: ${{ inputs.post_comment }}
+        INPUT_POST_INLINE_COMMENTS: ${{ inputs.post_inline_comments }}
+        INPUT_COMMENT_TAG: ${{ inputs.comment_tag }}
+        INPUT_FAIL_ON_SEVERITY: ${{ inputs.fail_on_severity }}
+        INPUT_MIN_SCORE: ${{ inputs.min_score }}
+        INPUT_PROJECT_CONTEXT: ${{ inputs.project_context }}
+        INPUT_LANGUAGE: ${{ inputs.language }}

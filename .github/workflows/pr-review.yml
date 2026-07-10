@@ -1,0 +1,44 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+# Least privilege: read the code, write the review comment.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI review
+        id: review
+        uses: ./ # replace with owner/action-prrev@v1 when consuming from another repo
+        with:
+          openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          model: anthropic/claude-sonnet-4.5
+          fallback_models: openai/gpt-4.1,google/gemini-2.5-pro
+          post_inline_comments: "true"
+          skip_labels: no-ai-review,dependencies
+          project_context: |
+            Python 3.11 service. We care most about input validation on the
+            HTTP boundary and about anything that widens the blast radius of
+            a compromised worker.
+          # Turn the review into a merge gate by uncommenting:
+          # fail_on_severity: high
+          # min_score: "70"
+
+      - name: Summarize
+        if: always() && steps.review.outputs.skipped == 'false'
+        run: |
+          echo "Score:    ${{ steps.review.outputs.score }}"
+          echo "Verdict:  ${{ steps.review.outputs.verdict }}"
+          echo "Findings: ${{ steps.review.outputs.findings_count }}"
