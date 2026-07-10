@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Anas Nashif
+# SPDX-License-Identifier: Apache-2.0
+
 """Unified-diff parsing, file filtering, and chunking for oversized pull requests."""
 
 from __future__ import annotations

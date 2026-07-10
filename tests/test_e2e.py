@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Anas Nashif
+# SPDX-License-Identifier: Apache-2.0
+
 """End-to-end run of main.py against stub GitHub and OpenRouter servers."""
 
 import json

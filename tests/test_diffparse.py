@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Anas Nashif
+# SPDX-License-Identifier: Apache-2.0
+
 import diffparse
 
 SAMPLE = """diff --git a/app/auth.py b/app/auth.py

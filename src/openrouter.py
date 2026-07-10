@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Anas Nashif
+# SPDX-License-Identifier: Apache-2.0
+
 """OpenRouter chat-completions client with structured-output handling."""
 
 from __future__ import annotations
