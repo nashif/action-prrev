@@ -277,6 +277,11 @@ def _prompt(requests):
     return completion["messages"][1]["content"]
 
 
+def _system(requests):
+    completion = next(body for _, path, body in requests if path.endswith("/chat/completions"))
+    return completion["messages"][0]["content"]
+
+
 def test_prompt_carries_the_surrounding_source_of_changed_files(server, tmp_path):
     proc, _, _ = run_action(server, tmp_path, INPUT_CONTEXT_LINES="5")
     assert proc.returncode == 0
@@ -324,3 +329,44 @@ def test_maintainer_guidance_reaches_the_prompt(server, tmp_path):
     prompt = _prompt(Handler.requests)
     assert "### Maintainer's review guidance" in prompt
     assert "Do not flag missing type hints." in prompt
+
+
+def test_default_profile_is_used_when_none_is_named(server, tmp_path):
+    proc, _, _ = run_action(server, tmp_path)
+    assert proc.returncode == 0
+    system = _system(Handler.requests)
+    assert "meticulous senior software engineer" in system
+    assert "# Output contract" in system
+
+
+def test_zephyr_profile_reaches_the_model_as_the_system_message(server, tmp_path):
+    proc, _, _ = run_action(server, tmp_path, INPUT_REVIEW_PROFILE="zephyr")
+    assert proc.returncode == 0
+
+    system = _system(Handler.requests)
+    assert system.startswith("You are an automated pull-request reviewer for the Zephyr Project.")
+    assert "Devicetree" in system and "Kconfig" in system
+    # The contract is appended after the profile and still demands JSON.
+    assert system.index("Review discipline") < system.index("# Output contract")
+    assert "Return exactly one JSON object" in system
+    # ...and the JSON schema is still enforced at the API layer.
+    completion = next(body for _, path, body in Handler.requests if path.endswith("/chat/completions"))
+    assert completion["response_format"]["json_schema"]["strict"] is True
+
+
+def test_a_custom_profile_file_is_read_from_the_workspace(server, tmp_path):
+    (tmp_path / "ci").mkdir()
+    (tmp_path / "ci" / "house.md").write_text("Review only for thread safety.")
+    proc, _, _ = run_action(
+        server, tmp_path, INPUT_REVIEW_PROFILE="ci/house.md", GITHUB_WORKSPACE=str(tmp_path)
+    )
+    assert proc.returncode == 0
+    assert _system(Handler.requests).startswith("Review only for thread safety.")
+
+
+def test_an_unknown_profile_fails_the_step_before_spending_a_token(server, tmp_path):
+    proc, _, _ = run_action(server, tmp_path, INPUT_REVIEW_PROFILE="zepyhr")
+    assert proc.returncode == 1
+    assert "unknown review_profile" in proc.stdout + proc.stderr
+    # Fails before any network call at all, not just before the model call.
+    assert Handler.requests == []

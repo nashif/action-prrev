@@ -27,6 +27,7 @@ jobs:
           model: tencent/hy3
           fallback_models: deepseek/deepseek-v4-flash
           post_inline_comments: "true"
+          # review_profile: zephyr    # or a path: .github/review-profile.md
           skip_labels: no-ai-review,dependencies
           project_context: |
             Python 3.11 service. We care most about input validation on the

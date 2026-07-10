@@ -134,6 +134,50 @@ call per file — **only safe when your workflow checked out the pull request's 
 `pull_request_target` the workspace holds the *base* branch, so `workspace` would show the model
 the old code with the new line numbers. Leave it on `api` unless you know otherwise.
 
+### Review profiles
+
+A **profile** is the domain half of the system prompt: who the reviewer is and what to look for.
+Pick one with `review_profile`:
+
+```yaml
+with:
+  review_profile: zephyr
+```
+
+| Profile | For |
+| --- | --- |
+| `default` | Any codebase. A senior engineer with a security reviewer's instincts. |
+| `zephyr` | Pull requests into the Zephyr RTOS tree: Kconfig, Devicetree, drivers, kernel and concurrency, syscalls and userspace, SMP, portability, tests and samples. |
+
+Point `review_profile` at a Markdown file to use your own, resolved relative to the workspace:
+
+```yaml
+- uses: actions/checkout@v4       # needed so the action can read the file
+- uses: your-org/action-prrev@v1
+  with:
+    review_profile: .github/review-profile.md
+```
+
+An unknown name fails the step immediately — before any network call — and lists the profiles that
+do exist, so `zepyhr` never silently degrades to a generic review.
+
+#### Profiles cannot break the output
+
+The action appends a fixed **output contract** to whatever the profile says, and the contract
+explicitly overrides any formatting the profile asks for. A profile may describe a Markdown review
+with its own headings; the model still returns the JSON object the schema requires. This is what
+lets the `zephyr` profile keep its own vocabulary:
+
+- Its fifth severity, `suggestion`, is mapped to severity `low` in the `suggestions` array.
+- Its `request changes` verdict (with a space) is normalized to `request_changes`.
+
+Findings that a profile marks as unsuitable for an inline comment — architecture, missing tests,
+cross-file behavior — should carry line `0`, which keeps them in the summary comment and off an
+arbitrary line.
+
+Profiles that ask for a test assessment get one: `test_assessment` is a schema field, rendered as
+its own section in the comment when the model fills it in.
+
 ### Steering the review
 
 `project_context` is prepended to the prompt as maintainer guidance. Use it to tell the model what
@@ -176,6 +220,7 @@ with:
 | `fail_on_severity` | `none` | `none`, `low`, `medium`, `high`, or `critical`. |
 | `min_score` | — | Fail when the score falls below this. |
 | `project_context` | — | Repository context handed to the model. |
+| `review_profile` | `default` | `default`, `zephyr`, or a path to your own Markdown profile. |
 | `language` | `English` | Language for the review prose. |
 
 ## Outputs
@@ -267,7 +312,9 @@ files, and gating logic are all exercised without network access or an API key.
 | [src/diffparse.py](src/diffparse.py) | Unified-diff parsing, filtering, chunking. |
 | [src/github_api.py](src/github_api.py) | GitHub REST client. |
 | [src/openrouter.py](src/openrouter.py) | OpenRouter client and JSON recovery. |
-| [src/prompts.py](src/prompts.py) | System prompt and response schema. |
+| [src/prompts.py](src/prompts.py) | Output contract, response schema, user prompt. |
+| [src/profiles.py](src/profiles.py) | Built-in and custom review profile loading. |
+| [review_profiles/](review_profiles/) | The profile texts themselves. |
 | [src/review.py](src/review.py) | Model orchestration, normalization, merging. |
 | [src/context.py](src/context.py) | Surrounding-code and repository-overview context. |
 | [src/render.py](src/render.py) | Markdown comment and inline comment rendering. |

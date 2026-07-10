@@ -131,15 +131,21 @@ def comment_body(review: Review, cfg, pr, repo: str) -> str:
     else:
         parts += ["### Findings", "", "Nothing to flag. The diff reads clean against every category checked.", ""]
 
+    if review.test_assessment:
+        parts += ["### 🧪 Test assessment", "", review.test_assessment, ""]
+
     if review.final_comments:
         parts += ["### 📋 Final comments", "", review.final_comments, ""]
 
-    parts += ["---", "", _footer(review, pr)]
+    parts += ["---", "", _footer(review, pr, getattr(cfg, "review_profile", ""))]
     return "\n".join(parts)
 
 
-def _footer(review: Review, pr) -> str:
-    bits = [f"Model: `{', '.join(review.models_used) or 'unknown'}`", f"Commit: `{pr.head_sha[:7]}`"]
+def _footer(review: Review, pr, profile: str = "") -> str:
+    bits = [f"Model: `{', '.join(review.models_used) or 'unknown'}`"]
+    if profile:
+        bits.append(f"Profile: `{profile}`")
+    bits.append(f"Commit: `{pr.head_sha[:7]}`")
     if review.chunks > 1:
         bits.append(f"Diff reviewed in {review.chunks} slices")
     if review.truncated:

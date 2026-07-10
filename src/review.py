@@ -48,6 +48,7 @@ class Review:
     verdict: str = "comment"
     confidence: str = "medium"
     final_comments: str = ""
+    test_assessment: str = ""
     findings: list[Finding] = field(default_factory=list)
     models_used: list[str] = field(default_factory=list)
     prompt_tokens: int = 0
@@ -83,9 +84,7 @@ def _findings_from(payload: dict[str, Any]) -> list[Finding]:
             if not title and not description:
                 continue
 
-            severity = _clean(raw.get("severity")).lower()
-            if severity not in VALID_SEVERITIES:
-                severity = "medium"
+            severity = _normalize_severity(_clean(raw.get("severity")))
 
             try:
                 line = int(raw.get("line") or 0)
@@ -106,6 +105,33 @@ def _findings_from(payload: dict[str, Any]) -> list[Finding]:
                 )
             )
     return findings
+
+
+# Profiles are free to name severities their own community uses; map them onto the
+# four the schema, the gate, and the renderer all agree on.
+SEVERITY_ALIASES = {
+    "suggestion": "low",
+    "suggestions": "low",
+    "info": "low",
+    "informational": "low",
+    "nit": "low",
+    "minor": "low",
+    "major": "high",
+    "blocker": "critical",
+    "severe": "critical",
+}
+
+
+def _normalize_severity(value: str) -> str:
+    value = value.lower()
+    if value in VALID_SEVERITIES:
+        return value
+    return SEVERITY_ALIASES.get(value, "medium")
+
+
+def _normalize_verdict(value: str) -> str:
+    """`request changes`, `request-changes`, `REQUEST_CHANGES` all mean the same thing."""
+    return value.strip().lower().replace(" ", "_").replace("-", "_")
 
 
 def _dedupe(findings: list[Finding]) -> list[Finding]:
@@ -150,12 +176,13 @@ def run(
     chunks: list[Chunk],
     files_summary: str,
     *,
+    profile: str,
     repo: str = "",
     repo_overview: str = "",
     context_for: Callable[[list[str]], str] | None = None,
 ) -> Review:
     """Review each diff chunk, then synthesize one verdict when there was more than one."""
-    system = prompts.system_prompt(cfg.language)
+    system = prompts.system_prompt(cfg.language, profile)
     review = Review(chunks=len(chunks))
     partials: list[dict[str, Any]] = []
 
@@ -219,11 +246,12 @@ def run(
         payload = partials[0]
         review.summary = _clean(payload.get("summary"))
         review.score = _clamp_score(payload.get("score"))
-        review.verdict = _clean(payload.get("verdict")).lower()
+        review.verdict = _normalize_verdict(_clean(payload.get("verdict")))
         review.confidence = _clean(payload.get("confidence")).lower() or "medium"
         review.final_comments = _clean(payload.get("final_comments"))
+        review.test_assessment = _clean(payload.get("test_assessment"))
     else:
-        _synthesize(client, cfg, pr, review)
+        _synthesize(client, cfg, pr, review, profile)
 
     if review.verdict not in VALID_VERDICTS:
         review.verdict = "request_changes" if review.highest_severity in ("high", "critical") else "comment"
@@ -231,12 +259,12 @@ def run(
     return review
 
 
-def _synthesize(client: OpenRouterClient, cfg: Config, pr, review: Review) -> None:
+def _synthesize(client: OpenRouterClient, cfg: Config, pr, review: Review, profile: str) -> None:
     user = prompts.synthesis_prompt(pr, _digest(review.findings), review.chunks, cfg.language)
     try:
         completion = client.complete(
             models=cfg.models,
-            system=prompts.system_prompt(cfg.language),
+            system=prompts.system_prompt(cfg.language, profile),
             user=user,
             temperature=cfg.temperature,
             max_tokens=2000,
@@ -255,9 +283,10 @@ def _synthesize(client: OpenRouterClient, cfg: Config, pr, review: Review) -> No
 
     review.summary = _clean(payload.get("summary"))
     review.score = _clamp_score(payload.get("score"))
-    review.verdict = _clean(payload.get("verdict")).lower()
+    review.verdict = _normalize_verdict(_clean(payload.get("verdict")))
     review.confidence = _clean(payload.get("confidence")).lower() or "medium"
     review.final_comments = _clean(payload.get("final_comments"))
+    review.test_assessment = _clean(payload.get("test_assessment"))
 
 
 def _score_from_findings(review: Review) -> int:

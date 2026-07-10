@@ -13,6 +13,7 @@ import config
 import context
 import diffparse
 import github_api
+import profiles
 import render
 import review as review_mod
 from config import SEVERITY_ORDER
@@ -92,6 +93,10 @@ def enforce(cfg: config.Config, result: review_mod.Review) -> int:
 
 def main() -> int:
     cfg = config.load()
+    # Resolve the profile before touching the network: a typo should fail the step
+    # immediately, not after fetching a diff.
+    profile = profiles.load(cfg.review_profile)
+    log.info("Review profile %r (%d chars)", cfg.review_profile, len(profile))
 
     number = github_api.pull_request_number()
     if number is None:
@@ -147,6 +152,7 @@ def main() -> int:
         pr,
         chunks,
         files_summary(files),
+        profile=profile,
         repo=repo,
         repo_overview=overview,
         context_for=context_for,

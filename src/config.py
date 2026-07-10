@@ -87,6 +87,7 @@ class Config:
 
     project_context: str = ""
     language: str = "English"
+    review_profile: str = "default"
 
     @property
     def models(self) -> list[str]:
@@ -148,4 +149,5 @@ def load() -> Config:
         min_score=min_score,
         project_context=os.environ.get("INPUT_PROJECT_CONTEXT", "").strip(),
         language=_get("language", "English"),
+        review_profile=_get("review_profile", "default") or "default",
     )

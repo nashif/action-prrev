@@ -36,7 +36,7 @@ def _finding_schema(extra: dict[str, Any] | None = None) -> dict[str, Any]:
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["summary", "score", "verdict", "confidence", *CATEGORIES, "final_comments"],
+    "required": ["summary", "score", "verdict", "confidence", *CATEGORIES, "test_assessment", "final_comments"],
     "properties": {
         "summary": {"type": "string", "description": "Two or three sentences on what this pull request does."},
         "score": {"type": "integer", "description": "Overall quality of the change, 0 (unmergeable) to 100 (exemplary)."},
@@ -69,6 +69,13 @@ REVIEW_SCHEMA: dict[str, Any] = {
             "description": "Deviations from language, framework, or repository conventions.",
             "items": _finding_schema(),
         },
+        "test_assessment": {
+            "type": "string",
+            "description": (
+                "What behavior the change tests, what material behavior it leaves untested, and whether tests "
+                "are required before merge. Empty string when the change needs no tests."
+            ),
+        },
         "final_comments": {"type": "string", "description": "Closing guidance for the author: what to fix first, what can wait."},
     },
 }
@@ -76,38 +83,57 @@ REVIEW_SCHEMA: dict[str, Any] = {
 SYNTHESIS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["summary", "score", "verdict", "confidence", "final_comments"],
+    "required": ["summary", "score", "verdict", "confidence", "test_assessment", "final_comments"],
     "properties": {
         key: REVIEW_SCHEMA["properties"][key]
-        for key in ("summary", "score", "verdict", "confidence", "final_comments")
+        for key in ("summary", "score", "verdict", "confidence", "test_assessment", "final_comments")
     },
 }
 
 
-SYSTEM_PROMPT = """\
-You are a meticulous senior software engineer reviewing a GitHub pull request. \
-You are also a security reviewer: treat every changed line as untrusted until you have reasoned about how it could be abused.
+# Appended to every profile. This, not the profile, governs the shape of the answer:
+# a profile is free to describe a Markdown review, and the contract still holds.
+OUTPUT_CONTRACT = """\
 
-Rules you must follow:
-1. Report findings only against lines the diff changes. You are given the surrounding source of each changed file and a map \
-of the repository: use them to understand what the changed code does, what its callers assume, and what already exists — \
-but a pre-existing defect on an unchanged line is not this pull request's problem. Do not ask to see more files.
-2. Every finding must be actionable and specific. Name the input, state, or sequence of calls that triggers the problem. \
-If you cannot describe how it fails, it is not a finding. Use the surrounding code to check your reasoning before you report: \
-if a guard, a validation, or an early return upstream already makes the failure impossible, say nothing.
-3. Never report style preferences, formatting, or missing comments as bugs. A linter already does that.
-4. `file` must match a path in the diff exactly. `line` must be a line number on the new side of the diff \
-(the numbering established by the @@ hunk headers), or 0 when the finding is not tied to one line.
-5. `suggested_code` must be a drop-in replacement for the cited lines, correctly indented, with no diff markers \
-(no leading + or -). Leave it empty when a snippet would not clarify the fix.
-6. Prefer a handful of high-value findings over exhaustive nitpicking. Empty arrays are the correct answer for a clean diff.
-7. Severity means impact if the code ships: critical (exploitable or data-destroying), high (breaks a common path), \
-medium (breaks an edge case or degrades performance materially), low (minor).
-8. Assign `score` on the merged change as a whole. Deduct for defects, not for the size of the diff. \
-Set `verdict` to request_changes only when at least one high or critical finding stands.
-9. Write all prose in {language}.
+---
 
-Return only the JSON object described by the schema. No prose outside it.\
+# Output contract
+
+The instructions above describe *what* to review. This section governs *how* to answer, and \
+overrides any formatting, section layout, or heading structure requested above.
+
+Return exactly one JSON object conforming to the supplied schema. Emit no prose, no Markdown, \
+and no code fences outside it.
+
+Map your review onto the schema's fields:
+
+- `summary`: what the pull request does and which areas it affects.
+- `bugs`, `security`, `performance`, `suggestions`, `best_practices`: arrays of findings. Put each \
+finding in the one array that fits it best; do not repeat a finding across arrays.
+- `test_assessment`: what behavior the change tests, what material behavior it leaves untested, and \
+whether tests are required before merge. Empty string when the change needs no tests.
+- `final_comments`: closing guidance for the author -- what to fix first, what can wait.
+- `score` (0-100), `verdict`, `confidence`.
+
+Every finding object must set:
+
+- `file`: a path exactly as it appears in the diff.
+- `line`: a line number on the new side of the diff (the numbering established by the @@ hunk \
+headers). Use 0 when the concern is not anchored to one changed line -- architecture, missing tests, \
+cross-file behavior, or API design. A finding with line 0 appears in the summary comment only, never \
+as an inline comment.
+- `severity`: exactly one of `low`, `medium`, `high`, `critical`. Where the guidance above offers a \
+`suggestion` severity, express it as severity `low` in the `suggestions` array.
+- `title`: one short sentence naming the problem.
+- `description`: the problem, the conditions that trigger it, and its impact.
+- `recommendation`: the specific change to make.
+- `suggested_code`: a drop-in replacement for the cited lines, correctly indented, with no diff \
+markers (no leading + or -). Empty string when a snippet would not clarify the fix.
+- `cwe` (security findings only): a CWE identifier such as `CWE-89`, or an empty string.
+
+`verdict` must be exactly `approve`, `comment`, or `request_changes` -- with an underscore, never a space.
+
+Empty arrays are the correct answer for a clean diff. Write all prose in {language}.\
 """
 
 
@@ -179,5 +205,6 @@ def synthesis_prompt(pr, findings_digest: str, chunk_count: int, language: str) 
     )
 
 
-def system_prompt(language: str) -> str:
-    return SYSTEM_PROMPT.format(language=language)
+def system_prompt(language: str, profile: str) -> str:
+    """Domain guidance from the profile, then the output contract that overrides its formatting."""
+    return profile.rstrip() + "\n" + OUTPUT_CONTRACT.format(language=language)

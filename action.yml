@@ -142,6 +142,15 @@ inputs:
     required: false
     default: ""
 
+  review_profile:
+    description: >-
+      Which review profile to use: the name of a built-in profile (`default`, `zephyr`)
+      or a path to a Markdown file in your repository holding your own. The profile
+      supplies the reviewer's domain guidance; the JSON output contract is always
+      appended by the action and overrides any formatting the profile asks for.
+    required: false
+    default: "default"
+
   project_context:
     description: "Extra repository context handed to the model (conventions, architecture, review priorities)."
     required: false
@@ -209,5 +218,6 @@ runs:
         INPUT_COMMENT_TAG: ${{ inputs.comment_tag }}
         INPUT_FAIL_ON_SEVERITY: ${{ inputs.fail_on_severity }}
         INPUT_MIN_SCORE: ${{ inputs.min_score }}
+        INPUT_REVIEW_PROFILE: ${{ inputs.review_profile }}
         INPUT_PROJECT_CONTEXT: ${{ inputs.project_context }}
         INPUT_LANGUAGE: ${{ inputs.language }}
